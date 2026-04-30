@@ -639,6 +639,87 @@ class BMCHybridCollector:
                 cleaned.append(d)
         return cleaned
     
+    def get_os_ip(self) -> str:
+        """通过 Redfish 协议获取操作系统 IP 地址
+        优先从 Systems/*/EthernetInterfaces 获取，其次从 Managers/*/EthernetInterfaces 获取
+        返回第一个有效的 IPv4 地址（排除 BMC 自身管理网口）
+        """
+        os_ip = ''
+        
+        if not self._ensure_redfish():
+            return os_ip
+        
+        try:
+            # 路径1: Systems/*/EthernetInterfaces - 获取操作系统使用的网卡IP
+            resp = self.session.get(f"{self.base_url}/redfish/v1/Systems", timeout=30)
+            if resp.status_code == 200:
+                systems_data = resp.json()
+                for sys_member in systems_data.get('Members', []):
+                    system_url = sys_member.get('@odata.id', '')
+                    if not system_url:
+                        continue
+                    
+                    eth_resp = self.session.get(
+                        f"{self.base_url}{system_url}/EthernetInterfaces", timeout=30)
+                    if eth_resp.status_code != 200:
+                        continue
+                    
+                    eth_data = eth_resp.json()
+                    for eth_member in eth_data.get('Members', []):
+                        eth_url = eth_member.get('@odata.id', '')
+                        if not eth_url:
+                            continue
+                        
+                        detail_resp = self.session.get(f"{self.base_url}{eth_url}", timeout=30)
+                        if detail_resp.status_code != 200:
+                            continue
+                        
+                        detail = detail_resp.json()
+                        # 获取 IPv4 地址
+                        for addr in detail.get('IPv4Addresses', []):
+                            ip_address = addr.get('Address', '')
+                            if ip_address:
+                                # 排除 BMC IP（管理网口）和回环地址
+                                if ip_address != self.ip and not ip_address.startswith('127.'):
+                                    os_ip = ip_address
+                                    return os_ip
+            
+            # 路径2: Managers/*/EthernetInterfaces - 如果系统接口没有，尝试管理控制器接口
+            if not os_ip:
+                resp = self.session.get(f"{self.base_url}/redfish/v1/Managers", timeout=30)
+                if resp.status_code == 200:
+                    managers_data = resp.json()
+                    for mgr_member in managers_data.get('Members', []):
+                        mgr_url = mgr_member.get('@odata.id', '')
+                        if not mgr_url:
+                            continue
+                        
+                        eth_resp = self.session.get(
+                            f"{self.base_url}{mgr_url}/EthernetInterfaces", timeout=30)
+                        if eth_resp.status_code != 200:
+                            continue
+                        
+                        eth_data = eth_resp.json()
+                        for eth_member in eth_data.get('Members', []):
+                            eth_url = eth_member.get('@odata.id', '')
+                            if not eth_url:
+                                continue
+                            
+                            detail_resp = self.session.get(f"{self.base_url}{eth_url}", timeout=30)
+                            if detail_resp.status_code != 200:
+                                continue
+                            
+                            detail = detail_resp.json()
+                            for addr in detail.get('IPv4Addresses', []):
+                                ip_address = addr.get('Address', '')
+                                if ip_address and ip_address != self.ip and not ip_address.startswith('127.'):
+                                    os_ip = ip_address
+                                    return os_ip
+        except Exception as e:
+            print(f"  获取 OS IP 异常: {str(e)}")
+        
+        return os_ip
+
     def get_all_info(self) -> Dict:
         print(f"\n正在采集 {self.ip} 的信息...")
         
@@ -689,7 +770,8 @@ class BMCHybridCollector:
                 'processors': processors,
                 'cpus': [p for p in processors if p.get('processor_type') == 'cpu'],
                 'memory': self.get_memory_info(),
-                'disks': self.get_disk_info()
+                'disks': self.get_disk_info(),
+                'os_ip': self.get_os_ip(),  # 添加 OS IP 信息
             }
         finally:
             # 统一注销 Redfish session，避免泄漏

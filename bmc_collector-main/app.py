@@ -496,6 +496,36 @@ def collect_all():
     return jsonify({'message': '已开始全量采集'})
 
 
+# ======================== OS IP 同步 API ========================
+
+@app.route('/api/sync/os-ip/<int:device_id>', methods=['POST'])
+def sync_os_ip_single(device_id):
+    """同步单台设备的 OS IP（通过 BMC Redfish 协议）"""
+    device = db.session.get(Device, device_id)
+    if not device:
+        return jsonify({'error': '设备不存在'}), 404
+
+    from collector_service import sync_os_ip
+    result = sync_os_ip(device_id, app)
+    
+    if result['success']:
+        return jsonify(result)
+    else:
+        return jsonify(result), 500
+
+
+@app.route('/api/sync/os-ip/all', methods=['POST'])
+def sync_os_ip_all():
+    """批量同步所有设备的 OS IP（通过 BMC Redfish 协议）"""
+    from collector_service import sync_os_ip_all
+    result = sync_os_ip_all(app)
+    
+    if result['success']:
+        return jsonify(result)
+    else:
+        return jsonify(result), 500
+
+
 # ======================== 导出 API ========================
 
 @app.route('/api/export/devices', methods=['GET'])

@@ -22,6 +22,7 @@
         <button class="btn btn-danger" onclick="batchDeleteDevices()">批量删除</button>
         <button class="btn btn-success" onclick="collectAll()">全量采集</button>
         <button class="btn" onclick="showBatchSnSearchModal()" style="background:#7c3aed;color:#fff;border-color:#7c3aed;">SN批量搜索</button>
+        <button class="btn" style="background:#0891b2;color:#fff;border-color:#0891b2;" onclick="syncAllOsIp()">批量同步OS IP</button>
         <div class="dropdown">
             <button class="btn btn-info">导出</button>
             <div class="dropdown-content">
@@ -359,6 +360,7 @@ function renderDeviceTable() {
                     <button class="btn btn-xs btn-warning" onclick="openBmcPage('${esc(d.bmc_ip)}')">BMC</button>
                     <button class="btn btn-xs" onclick="showEditDeviceModal(${d.id})">编辑</button>
                     <button class="btn btn-xs btn-success" onclick="collectSingle(${d.id})">采集</button>
+                    <button class="btn btn-xs" style="background:#0891b2;color:#fff;border-color:#0891b2;" onclick="syncOsIp(${d.id})">同步OS IP</button>
                     <button class="btn btn-xs btn-danger" onclick="deleteDevice(${d.id}, '${esc(d.bmc_ip)}')">删</button>
                 </td>
             </tr>
@@ -771,6 +773,31 @@ async function collectAll() {
     toast(data.message || '全量采集已开始');
     const timer = setInterval(() => loadDevices(document.getElementById('searchInput').value.trim()), 5000);
     setTimeout(() => clearInterval(timer), 120000);
+}
+
+async function syncOsIp(deviceId) {
+    const resp = await fetch(`/api/sync/os-ip/${deviceId}`, {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '同步失败', 'error');
+        return;
+    }
+    toast(data.message);
+    await loadDevices(document.getElementById('searchInput').value.trim());
+}
+
+async function syncAllOsIp() {
+    if (!confirm('确认批量同步所有设备的 OS IP？')) {
+        return;
+    }
+    const resp = await fetch('/api/sync/os-ip/all', {method: 'POST'});
+    const data = await resp.json();
+    if (!resp.ok) {
+        toast(data.error || '批量同步失败', 'error');
+        return;
+    }
+    toast(`${data.message}: 成功 ${data.success_count} 台，失败 ${data.failed_count} 台`);
+    await loadDevices(document.getElementById('searchInput').value.trim());
 }
 
 let searchTimer = null;

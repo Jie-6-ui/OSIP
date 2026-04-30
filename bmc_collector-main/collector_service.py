@@ -37,6 +37,29 @@ def _is_valid_sn(val) -> bool:
     return True
 
 
+def _collect_os_ip(device: Device) -> str:
+    """仅采集 OS IP（通过 BMC Redfish 协议），不采集其他硬件信息"""
+    ip = device.bmc_ip
+    username = device.bmc_username
+    try:
+        password = device.bmc_password
+    except Exception:
+        return f"密码解密失败"
+
+    collector = BMCHybridCollector(ip, username, password)
+
+    try:
+        os_ip = collector.get_os_ip()
+        if os_ip:
+            device.os_ip = os_ip
+            db.session.commit()
+            return f"成功获取 OS IP: {os_ip}"
+        else:
+            return "未获取到 OS IP"
+    except Exception as e:
+        return f"获取 OS IP 异常: {str(e)}"
+
+
 def _collect_one(device: Device) -> str:
     """采集单台设备，返回状态说明文本"""
     ip = device.bmc_ip
@@ -84,6 +107,11 @@ def _collect_one(device: Device) -> str:
         device.server_model = auto_model
     if auto_version:
         device.server_version = auto_version
+
+    # --- 更新 OS IP（从 BMC Redfish 获取）---
+    os_ip = info.get('os_ip', '')
+    if os_ip:
+        device.os_ip = os_ip
 
     # --- 处理器（CPU / GPU / NPU 按 processor_type 分类） ---
     type_counters = {'cpu': 0, 'gpu': 0, 'npu': 0}
@@ -402,7 +430,59 @@ def _collect_nic_redfish(collector: BMCHybridCollector):
     return nics
 
 
-# --------------- 对外接口 ---------------
+# --------------- 对外接口 - OS IP 同步 ---------------
+
+def sync_os_ip(device_id: int, app=None):
+    """同步单台设备的 OS IP（通过 BMC Redfish 协议）"""
+    from app import create_app
+    _app = app or create_app()
+    with _app.app_context():
+        device = db.session.get(Device, device_id)
+        if not device:
+            return {'success': False, 'message': '设备不存在'}
+        
+        msg = _collect_os_ip(device)
+        return {'success': '异常' not in msg and '失败' not in msg, 'message': msg, 'device_id': device_id}
+
+
+def sync_os_ip_all(app=None):
+    """批量同步所有设备的 OS IP"""
+    from app import create_app
+    _app = app or create_app()
+    with _app.app_context():
+        devices = Device.query.all()
+        if not devices:
+            return {'success': True, 'message': '无设备', 'success_count': 0, 'failed_count': 0}
+
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        for device in devices:
+            msg = _collect_os_ip(device)
+            success = '异常' not in msg and '失败' not in msg
+            results.append({
+                'device_id': device.id,
+                'bmc_ip': device.bmc_ip,
+                'os_ip': device.os_ip,
+                'success': success,
+                'message': msg,
+            })
+            if success:
+                success_count += 1
+            else:
+                failed_count += 1
+
+        return {
+            'success': True,
+            'message': f'批量同步完成',
+            'success_count': success_count,
+            'failed_count': failed_count,
+            'results': results,
+        }
+
+
+# --------------- 对外接口 - 全量采集 ---------------
 
 def collect_device(device_id: int, app=None):
     """采集单台设备（可在线程中调用，需携带 app 上下文）"""
